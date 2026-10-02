@@ -170,6 +170,51 @@ def check(conf):
                                                      or r["aggregations"][name].get("r", {}).get("buckets", []))))
 
 
+DRILL_FIELDS = [
+    # Windows / Sysmon
+    "win.eventdata.image", "win.eventdata.sourceImage", "win.eventdata.targetImage",
+    "win.eventdata.grantedAccess", "win.eventdata.parentImage", "win.eventdata.targetFilename",
+    "win.eventdata.targetObject", "win.eventdata.details", "win.eventdata.commandLine",
+    "win.eventdata.signature", "win.eventdata.signatureStatus",
+    # Linux auditd / syslog / FIM
+    "audit.exe", "audit.command", "audit.dev", "audit.uid", "audit.auid", "syscheck.path",
+    "data.title", "data.file", "program_name", "location",
+]
+
+
+def drill(conf, a):
+    rules = [r.strip() for r in a.drill.split(",") if r.strip()]
+    flt = [{"range": {"timestamp": {"gte": "now-%dd" % a.days}}}, {"terms": {"rule.id": rules}}]
+    if a.agent:
+        flt.append({"term": {"agent.name": a.agent}})
+    aggs = {"rule": {"terms": {"field": "rule.id", "size": 20}},
+            "agent": {"terms": {"field": "agent.name", "size": 20}},
+            "hour": {"date_histogram": {"field": "timestamp", "fixed_interval": "1h", "min_doc_count": 1,
+                                        "format": "MM-dd HH:00"}}}
+    for i, f in enumerate(DRILL_FIELDS):
+        aggs["f%d" % i] = {"terms": {"field": f, "size": 8}}
+    r = search(conf, {"size": 0, "track_total_hits": True, "query": {"bool": {"filter": flt}}, "aggs": aggs})
+    ag = r.get("aggregations") or {}
+    tot = (r.get("hits") or {}).get("total", 0)
+    tot = tot.get("value", 0) if isinstance(tot, dict) else tot
+    print("Drill-down: rule(s) %s%s, last %d day(s): %d events" % (
+        ",".join(rules), " on " + a.agent if a.agent else "", a.days, tot))
+    for name, key in (("rule", "rule"), ("agent", "agent")):
+        print("  %-6s %s" % (name + ":", ", ".join("%s (%d)" % (b["key"], b["doc_count"]) for b in ag[key]["buckets"])))
+    hrs = ag["hour"]["buckets"]
+    if hrs:
+        busiest = sorted(hrs, key=lambda b: -b["doc_count"])[:6]
+        print("  busiest hours (UTC): " + ", ".join("%s=%d" % (b["key_as_string"], b["doc_count"]) for b in busiest))
+    for i, f in enumerate(DRILL_FIELDS):
+        bs = ag["f%d" % i]["buckets"]
+        if not bs:
+            continue
+        print("\n  %s" % f)
+        for b in bs:
+            v = str(b["key"]).replace("\\\\", "\\")
+            print("    %6d  %s" % (b["doc_count"], v[:160]))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--days", type=int, default=3)
@@ -178,10 +223,14 @@ def main():
     ap.add_argument("--conf", default=CONF_FILE)
     ap.add_argument("--out", help="also write the report to this file")
     ap.add_argument("--check", action="store_true", help="diagnose access: who am I, what can I see")
+    ap.add_argument("--drill", help="rule ID(s), comma-separated: show what's behind them (programs, files, rights)")
+    ap.add_argument("--agent", help="limit --drill to one agent name")
     a = ap.parse_args()
     conf = load_conf(a.conf)
     if a.check:
         return check(conf)
+    if a.drill:
+        return drill(conf, a)
 
     rng = {"range": {"timestamp": {"gte": "now-%dd" % a.days}}}
     flt = [rng] + ([{"range": {"rule.level": {"gte": a.min_level}}}] if a.min_level else [])
