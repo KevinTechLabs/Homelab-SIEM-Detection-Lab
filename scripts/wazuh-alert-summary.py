@@ -44,6 +44,10 @@ def load_conf(path):
 
 
 def search(conf, body):
+    return request(conf, "POST", "/wazuh-alerts-*/_search", body)
+
+
+def request(conf, method, path, body=None):
     base = conf["indexer"]
     u = urllib.parse.urlsplit(base)
     ctx = ssl.create_default_context()
@@ -59,7 +63,7 @@ def search(conf, body):
         if not hmac.compare_digest(want, got):
             sys.exit("Indexer certificate changed since setup. Refusing to connect.")
         auth = base64.b64encode(("%s:%s" % (conf["user"], conf["password"])).encode()).decode()
-        conn.request("POST", "/wazuh-alerts-*/_search", body=json.dumps(body),
+        conn.request(method, path, body=json.dumps(body) if body is not None else None,
                      headers={"Content-Type": "application/json", "Authorization": "Basic " + auth})
         r = conn.getresponse()
         raw = r.read()
@@ -81,6 +85,34 @@ def short_ts(ts):
         return ts or "?"
 
 
+def check(conf):
+    """Print what the read-only account can see. No passwords or document contents are shown."""
+    def safe(fn):
+        try:
+            return fn()
+        except SystemExit as ex:
+            return {"error": str(ex)}
+    who = safe(lambda: request(conf, "GET", "/_plugins/_security/authinfo"))
+    print("user:          ", who.get("user_name", who.get("error")))
+    print("roles:         ", ", ".join(who.get("roles") or []) or "-")
+    print("backend roles: ", ", ".join(who.get("backend_roles") or []) or "-")
+    idx = safe(lambda: request(conf, "GET", "/_cat/indices/wazuh-alerts-*?format=json&h=index,docs.count"))
+    if isinstance(idx, list):
+        print("alert indices visible: %d" % len(idx))
+        for i in sorted(idx, key=lambda x: x["index"])[-5:]:
+            print("   %s  %s docs" % (i["index"], i["docs.count"]))
+    else:
+        print("alert indices: ", idx.get("error", idx))
+    for label, q in (("all time", {"match_all": {}}),
+                     ("last 3 days", {"range": {"timestamp": {"gte": "now-3d"}}})):
+        r = safe(lambda: request(conf, "POST", "/wazuh-alerts-*/_count", {"query": q}))
+        print("count %-12s %s" % (label + ":", r.get("count", r.get("error", r))))
+    r = safe(lambda: request(conf, "POST", "/wazuh-alerts-*/_search",
+                             {"size": 1, "sort": [{"timestamp": "desc"}], "_source": ["timestamp", "agent.name"]}))
+    hits = ((r.get("hits") or {}).get("hits") or []) if isinstance(r, dict) else []
+    print("newest alert:  ", (hits[0].get("_source") if hits else r.get("error", "none visible")))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--days", type=int, default=3)
@@ -88,8 +120,11 @@ def main():
     ap.add_argument("--min-level", type=int, default=0)
     ap.add_argument("--conf", default=CONF_FILE)
     ap.add_argument("--out", help="also write the report to this file")
+    ap.add_argument("--check", action="store_true", help="diagnose access: who am I, what can I see")
     a = ap.parse_args()
     conf = load_conf(a.conf)
+    if a.check:
+        return check(conf)
 
     rng = {"range": {"timestamp": {"gte": "now-%dd" % a.days}}}
     flt = [rng] + ([{"range": {"rule.level": {"gte": a.min_level}}}] if a.min_level else [])
