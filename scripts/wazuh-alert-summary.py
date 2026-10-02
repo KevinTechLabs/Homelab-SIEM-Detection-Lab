@@ -171,14 +171,16 @@ def check(conf):
 
 
 DRILL_FIELDS = [
+    # Indexed alert documents nest decoded fields under "data." (rules refer to them without it).
     # Windows / Sysmon
-    "win.eventdata.image", "win.eventdata.sourceImage", "win.eventdata.targetImage",
-    "win.eventdata.grantedAccess", "win.eventdata.parentImage", "win.eventdata.targetFilename",
-    "win.eventdata.targetObject", "win.eventdata.details", "win.eventdata.commandLine",
-    "win.eventdata.signature", "win.eventdata.signatureStatus",
+    "data.win.eventdata.image", "data.win.eventdata.sourceImage", "data.win.eventdata.targetImage",
+    "data.win.eventdata.grantedAccess", "data.win.eventdata.parentImage", "data.win.eventdata.targetFilename",
+    "data.win.eventdata.targetObject", "data.win.eventdata.details", "data.win.eventdata.commandLine",
+    "data.win.eventdata.user", "data.win.system.eventID",
     # Linux auditd / syslog / FIM
-    "audit.exe", "audit.command", "audit.dev", "audit.uid", "audit.auid", "syscheck.path",
-    "data.title", "data.file", "program_name", "location",
+    "data.audit.exe", "data.audit.command", "data.audit.dev", "data.audit.type", "data.audit.auid",
+    "data.audit.prom", "data.audit.old_prom", "syscheck.path", "data.title", "data.file",
+    "predecoder.program_name", "location",
 ]
 
 
