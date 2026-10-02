@@ -47,4 +47,8 @@ data.url /does-not-exist, PCI DSS 6.5/11.4, NIST SA.11/SI.4
 
 ## Noise found on the new agent
 
-Bursts of USB attach/detach events (rules 81101/81102, level 3) about every 3 minutes looked like a flapping device rather than normal activity. They're under investigation before any tuning. USB storage on a host *is* security-relevant (T1052, T1091), so any exception will be scoped to one identified device rather than silencing the rules.
+**Observed:** bursts of about 5 USB attach/detach events (rules 81101/81102, level 3) every few minutes on the Kali agent.
+
+**Investigation:** the kernel log showed the whole tree behind one hub re-enumerating together. A USB KVM switch controller (ASIX AX68004) sat behind a Genesys hub, with a keyboard and a wireless mouse receiver behind it. The device numbers kept climbing, which means repeated reconnects. No storage device was involved (`lsblk` showed only the internal NVMe drive). The bursts lined up with me switching the shared keyboard and mouse between my PC and the lab box.
+
+**Decision:** explained and benign, but **not tuned**. The events are level 3, already below the level-7 threshold that sends alerts to Sentinel, so nothing pages. A USB storage attach on a lab host is security-relevant (T1052, T1091) and must keep alerting, and a tuning rule scoped to the KVM's port would also hide a USB stick plugged into that hub. Not every noisy rule needs an exception. Sometimes the right fix is knowing why it's noisy and filtering the view.
