@@ -91,6 +91,28 @@ def short_ts(ts):
         return ts or "?"
 
 
+def rule_agent_agg(size):
+    return {"terms": {"field": "rule.id", "size": size, "order": {"_count": "desc"}},
+            "aggs": {"lvl": {"max": {"field": "rule.level"}},
+                     "desc": {"terms": {"field": "rule.description", "size": 1}},
+                     "mitre": {"terms": {"field": "rule.mitre.id", "size": 3}},
+                     "agents": {"terms": {"field": "agent.name", "size": 10},
+                                "aggs": {"first": {"min": {"field": "timestamp"}},
+                                         "last": {"max": {"field": "timestamp"}}}}}}
+
+
+def rule_agent_rows(agg):
+    rows = []
+    for b in agg.get("buckets", []):
+        lvl = int(b["lvl"]["value"] or 0)
+        desc = ((b["desc"]["buckets"] or [{}])[0].get("key") or "").replace("|", "/").strip()[:80]
+        mitre = ",".join(m["key"] for m in b["mitre"]["buckets"]) or "-"
+        for ag in b["agents"]["buckets"]:
+            rows.append((ag["doc_count"], b["key"], lvl, ag["key"], desc, mitre,
+                         ag["first"].get("value_as_string"), ag["last"].get("value_as_string")))
+    return rows
+
+
 def build_aggs(top):
     return {
         "sev": {"range": {"field": "rule.level", "ranges": [
@@ -99,12 +121,10 @@ def build_aggs(top):
         "day": {"date_histogram": {"field": "timestamp", "calendar_interval": "day", "format": "yyyy-MM-dd"}},
         "agent": {"terms": {"field": "agent.name", "size": 50},
                   "aggs": {"max": {"max": {"field": "rule.level"}}}},
-        "combo": {"multi_terms": {"terms": [{"field": "rule.id"}, {"field": "agent.name"}],
-                                  "size": top, "order": {"_count": "desc"}},
-                  "aggs": {"first": {"min": {"field": "timestamp"}},
-                           "last": {"max": {"field": "timestamp"}},
-                           "info": {"top_hits": {"size": 1, "_source": ["rule.level", "rule.description",
-                                                                        "rule.mitre.id"]}}}},
+        # rule -> agent nesting with plain terms/min/max only. (multi_terms + top_hits trips an
+        # OpenSearch bug: "Scorable.score() because this.scorer is null" on some shards.)
+        "combo": rule_agent_agg(max(top, 10) * 2),
+        "hi": {"filter": {"range": {"rule.level": {"gte": 10}}}, "aggs": {"r": rule_agent_agg(50)}},
         "tuned": {"filter": {"terms": {"rule.id": list(TUNED_RULES)}},
                   "aggs": {"by": {"terms": {"field": "rule.id", "size": 10}}}}
     }
@@ -146,7 +166,8 @@ def check(conf):
             print("   %-6s FAILED: %s" % (name, r["error"]))
         else:
             print("   %-6s ok (%d buckets)" % (name, len(r["aggregations"][name].get("buckets", [])
-                                                     or r["aggregations"][name].get("by", {}).get("buckets", []))))
+                                                     or r["aggregations"][name].get("by", {}).get("buckets", [])
+                                                     or r["aggregations"][name].get("r", {}).get("buckets", []))))
 
 
 def main():
@@ -204,15 +225,24 @@ def main():
     L.append("")
     L.append("| Count | Rule | Lvl | Sev | Agent | Description | MITRE | First | Last |")
     L.append("|---:|---|---:|---|---|---|---|---|---|")
-    for b in aggs.get("combo", {}).get("buckets", []):
-        rid, agent = b["key"][0], b["key"][1]
-        src = ((b["info"]["hits"]["hits"] or [{}])[0].get("_source") or {}).get("rule") or {}
-        lvl = int(src.get("level") or 0)
-        desc = (src.get("description") or "").replace("|", "/").strip()[:80]
-        mitre = ",".join((src.get("mitre") or {}).get("id") or []) or "-"
+    rows = rule_agent_rows(aggs.get("combo", {}))
+    rows.sort(key=lambda r: (-r[0], -r[2]))
+    for cnt, rid, lvl, agent, desc, mitre, first, last in rows[:a.top]:
         L.append("| %d | %s | %d | %s | %s | %s | %s | %s | %s |" % (
-            b["doc_count"], rid, lvl, sev(lvl), agent, desc, mitre,
-            short_ts(b["first"].get("value_as_string")), short_ts(b["last"].get("value_as_string"))))
+            cnt, rid, lvl, sev(lvl), agent, desc, mitre, short_ts(first), short_ts(last)))
+    L.append("")
+    L.append("## Level 10 and above (all of them, highest level first)")
+    L.append("High-severity rules can be rare, so they're listed separately and never cut off by the count ranking.")
+    L.append("")
+    hi = rule_agent_rows((aggs.get("hi") or {}).get("r", {}))
+    if hi:
+        L.append("| Count | Rule | Lvl | Sev | Agent | Description | MITRE | First | Last |")
+        L.append("|---:|---|---:|---|---|---|---|---|---|")
+        for cnt, rid, lvl, agent, desc, mitre, first, last in sorted(hi, key=lambda r: (-r[2], r[0])):
+            L.append("| %d | %s | %d | %s | %s | %s | %s | %s | %s |" % (
+                cnt, rid, lvl, sev(lvl), agent, desc, mitre, short_ts(first), short_ts(last)))
+    else:
+        L.append("- none")
     L.append("")
     L.append("## Custom tuning rules still matching")
     tb = aggs.get("tuned", {}).get("by", {}).get("buckets", [])
