@@ -26,7 +26,7 @@ import urllib.parse
 from datetime import datetime
 
 CONF_FILE = "/etc/sentinel/wazuh.json"
-TUNED_RULES = ("100100", "100101", "100102", "100103")
+TUNED_RULES = ("100100", "100101", "100102", "100103", "100104")
 
 
 def load_conf(path):
@@ -196,7 +196,8 @@ def drill(conf, a):
                                         "format": "MM-dd HH:00"}}}
     for i, f in enumerate(DRILL_FIELDS):
         aggs["f%d" % i] = {"terms": {"field": f, "size": 8}}
-    r = search(conf, {"size": 0, "track_total_hits": True, "query": {"bool": {"filter": flt}}, "aggs": aggs})
+    r = search(conf, {"size": a.sample, "track_total_hits": True, "query": {"bool": {"filter": flt}}, "aggs": aggs,
+                      "sort": [{"timestamp": "desc"}], "_source": ["timestamp", "agent.name", "full_log"]})
     ag = r.get("aggregations") or {}
     tot = (r.get("hits") or {}).get("total", 0)
     tot = tot.get("value", 0) if isinstance(tot, dict) else tot
@@ -219,6 +220,10 @@ def drill(conf, a):
                 # keep just the module names: C:\\...\\ntdll.dll+9d4f4|... -> ntdll|KERNELBASE|...
                 v = " > ".join(m.split("\\")[-1].split("+")[0].rsplit(".", 1)[0] for m in v.split("|"))
             print("    %6d  %s" % (b["doc_count"], v[:220]))
+    for h in (r.get("hits") or {}).get("hits") or []:
+        src = h.get("_source") or {}
+        print("\n  sample %s %s:\n    %s" % (src.get("timestamp"), (src.get("agent") or {}).get("name"),
+                                         (src.get("full_log") or "(no full_log)")[:1500]))
 
 
 def main():
@@ -231,6 +236,7 @@ def main():
     ap.add_argument("--check", action="store_true", help="diagnose access: who am I, what can I see")
     ap.add_argument("--drill", help="rule ID(s), comma-separated: show what's behind them (programs, files, rights)")
     ap.add_argument("--agent", help="limit --drill to one agent name")
+    ap.add_argument("--sample", type=int, default=0, help="with --drill: print the raw log of the N newest events")
     a = ap.parse_args()
     conf = load_conf(a.conf)
     if a.check:
