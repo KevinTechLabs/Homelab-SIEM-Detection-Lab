@@ -119,3 +119,9 @@ Within 6 minutes on the Windows host: rule 92213 (level 15) ×5, rule 92041 "Bas
 |---|---|---|
 | OneDrive → Explorer (92910, level 12) | 5,591 | level 3 under rule 100103 |
 | Sentinel arp-scan (80710, level 10) | 1,716 | level 3 under rule 100104 |
+
+**Verification (about 1.7 hours after deployment):**
+- Rule 100104 had matched **42** events, the expected 24 per hour.
+- 80710's 24-hour total (546) matched about 22.5 hours of pre-deployment scans plus a handful of others, so Sentinel's scans stopped landing in 80710 when the rule went live.
+
+The handful of others is the rule working as intended. About a dozen 80710 events came from Docker `veth*` interfaces entering promiscuous mode as containers attached to the bridge after a reboot. They aren't `arp-scan`, so they **stayed at level 10**. They happen once per container start, so they're noted and left untuned until they recur noisily.

@@ -65,3 +65,13 @@ These checks **fail even though the setting is applied**. I verified each one ag
 | 730, 731 | Require the dictcheck/enforcing lines inside `common-password`, which would break PAM. The settings are applied in `pwquality.conf` |
 
 **Remaining 64 failures** = partitioning (21) + the accepted risks above + the defects above.
+
+## Keeping it hardened: patch cycle
+
+Hardening isn't a one-time score. After the CIS batches, Sentinel's "No reboot pending" check went red once a routine `apt upgrade` (31 updates) installed a new kernel (7.0.0-38). The follow-up:
+
+1. **Rebooted** into the new kernel and checked it was running (`uname -r`) *before* touching the old one. Never remove the kernel you're running.
+2. **Purged the old kernel** (7 packages, 319 MB, including its DKMS NVIDIA module). Leftover kernels are the biggest single source of vulnerability findings here (see [tuning.md](tuning.md#vulnerability-reduction-same-period)), because the CVE feed matches every installed kernel package, not just the running one.
+3. **Re-baselined AIDE** after the upgrade and purge, so the next daily integrity check compares against the patched system instead of reporting every updated file as a change.
+
+Two things fell out of the reboot: it confirmed the GRUB audit/AppArmor parameters and the Wazuh tuning rules survive a restart, and it surfaced Docker's `veth` promiscuous-mode events (see [tuning.md](tuning.md), Finding 5c).
