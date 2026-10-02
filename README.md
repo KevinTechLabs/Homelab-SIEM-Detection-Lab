@@ -46,7 +46,7 @@ flowchart LR
 | [`docs/tuning.md`](docs/tuning.md) | Alert triage write-ups: evidence, decision, rule, verification |
 | [`docs/hardening.md`](docs/hardening.md) | CIS batches on the SIEM server, accepted risks, benchmark defects |
 | [`docs/lab.md`](docs/lab.md) | Isolated lab target, log pipeline, detection gaps |
-| [`docs/incident-silent-log-pipeline.md`](docs/incident-silent-log-pipeline.md) | Incident write-up: router logs silently stopped for 7.5 h (T1562.006), traced with `tcpdump`, fixed, gap documented |
+| [`docs/incident-silent-log-pipeline.md`](docs/incident-silent-log-pipeline.md) | Incident write-up: router logs silently stopped twice (T1562.006), traced with `tcpdump`, fixed, and a silence alert built so it can't happen unnoticed again |
 | [`rules/local_rules.xml`](rules/local_rules.xml) | The custom Wazuh tuning rules |
 | [`scripts/wazuh-alert-summary.py`](scripts/wazuh-alert-summary.py) | Read-only triage tool: summary report, `--drill` into the programs, files, access rights and call traces behind a rule, `--sample` raw logs, `--check` access diagnostics |
 

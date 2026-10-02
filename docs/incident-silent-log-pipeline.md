@@ -1,6 +1,6 @@
 # Incident: the router's logs went silent for 7.5 hours, and nothing noticed
 
-**Date:** 2026-10-01/02 · **Impact:** loss of router telemetry (firewall and DHCP events) for about 7.5 hours · **Detected by:** a user-visible symptom, not by any alert · **Status:** resolved, with a detection gap open
+**Date:** 2026-10-01/02 · **Impact:** loss of router telemetry (firewall and DHCP events) for about 7.5 hours · **Detected by:** a user-visible symptom, not by any alert · **Status:** mitigated; detection gap closed; root-cause fix under observation
 
 ## Summary
 
@@ -34,6 +34,8 @@ $ tcpdump -ni <iface> udp port 5140 →  0 packets in 90 s                      
 
 Root cause on the router side is unconfirmed (no config change around 23:47). The working theory is a stalled syslog daemon.
 
+**Recurrence:** about an hour after the fix, the feed died again, unnoticed for another ~13 hours. The dashboard did show "No events since 4 h ago", but only to someone who opened that tab. The common factor was **Source Address = LAN**, which binds pfSense's syslog daemon to the LAN interface's address. If that interface or the filter reloads (package updates, Suricata or pfBlockerNG restarts), the daemon can lose its socket and never recover. The source address was changed to **Default (any)**, and the feed resumed immediately. Whether that's the permanent fix is being verified over the following days; the new silence alert means a third failure can't go unnoticed.
+
 ## Why it matters
 
 Losing telemetry with no alert is exactly what an attacker tries to arrange. MITRE ATT&CK lists it as **T1562.006, Impair Defenses: Indicator Blocking**. Here the cause was benign, but for 7.5 hours the SIEM would have missed port scans stopped at the router, new devices joining any VLAN, and DHCP activity. The dashboard kept showing **"Threat: Low"** the whole time, which was true only because it couldn't see.
@@ -45,7 +47,7 @@ Losing telemetry with no alert is exactly what an attacker tries to arrange. MIT
 | ✅ | Restarted pfSense remote logging; verified with `tcpdump` and the dashboard's "events in the last hour". |
 | ✅ | Connected pfSense's device list over key-only SSH, so online status in every zone comes from the router's ARP table every 5 minutes, independent of syslog. Trade-off documented: the monitoring server now holds an admin key to the router. |
 | ✅ | Added troubleshooting for this failure to the dashboard's README. |
-| ⏳ | **Open gap:** alert when a log source goes silent (for example, no pfSense syslog for 30 minutes), as a "heartbeat" detection mapped to T1562.006. |
+| ✅ | **Gap closed:** the dashboard now raises a high-severity **"pfSense logs stopped arriving"** alert (T1562.006) after 30 minutes of silence, posts it to Discord, and closes it automatically when logs resume. It only watches a feed that has worked before, and waits 30 minutes after a restart, so it doesn't false-alarm. |
 
 ## Lessons
 
