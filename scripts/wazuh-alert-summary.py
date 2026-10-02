@@ -44,7 +44,13 @@ def load_conf(path):
 
 
 def search(conf, body):
-    return request(conf, "POST", "/wazuh-alerts-*/_search", body)
+    r = request(conf, "POST", "/wazuh-alerts-*/_search", body)
+    sh = r.get("_shards") or {}
+    if sh.get("failed"):
+        reasons = sorted({((f.get("reason") or {}).get("reason") or str(f.get("reason")))[:300]
+                          for f in sh.get("failures") or []})
+        sys.exit("Indexer: %s of %s shards failed:\n  - %s" % (sh["failed"], sh.get("total"), "\n  - ".join(reasons)))
+    return r
 
 
 def request(conf, method, path, body=None):
@@ -85,6 +91,25 @@ def short_ts(ts):
         return ts or "?"
 
 
+def build_aggs(top):
+    return {
+        "sev": {"range": {"field": "rule.level", "ranges": [
+            {"key": "low (0-6)", "to": 7}, {"key": "medium (7-11)", "from": 7, "to": 12},
+            {"key": "high (12-14)", "from": 12, "to": 15}, {"key": "critical (15+)", "from": 15}]}},
+        "day": {"date_histogram": {"field": "timestamp", "calendar_interval": "day", "format": "yyyy-MM-dd"}},
+        "agent": {"terms": {"field": "agent.name", "size": 50},
+                  "aggs": {"max": {"max": {"field": "rule.level"}}}},
+        "combo": {"multi_terms": {"terms": [{"field": "rule.id"}, {"field": "agent.name"}],
+                                  "size": top, "order": {"_count": "desc"}},
+                  "aggs": {"first": {"min": {"field": "timestamp"}},
+                           "last": {"max": {"field": "timestamp"}},
+                           "info": {"top_hits": {"size": 1, "_source": ["rule.level", "rule.description",
+                                                                        "rule.mitre.id"]}}}},
+        "tuned": {"filter": {"terms": {"rule.id": list(TUNED_RULES)}},
+                  "aggs": {"by": {"terms": {"field": "rule.id", "size": 10}}}}
+    }
+
+
 def check(conf):
     """Print what the read-only account can see. No passwords or document contents are shown."""
     def safe(fn):
@@ -96,13 +121,15 @@ def check(conf):
     print("user:          ", who.get("user_name", who.get("error")))
     print("roles:         ", ", ".join(who.get("roles") or []) or "-")
     print("backend roles: ", ", ".join(who.get("backend_roles") or []) or "-")
-    idx = safe(lambda: request(conf, "GET", "/_cat/indices/wazuh-alerts-*?format=json&h=index,docs.count"))
-    if isinstance(idx, list):
-        print("alert indices visible: %d" % len(idx))
-        for i in sorted(idx, key=lambda x: x["index"])[-5:]:
-            print("   %s  %s docs" % (i["index"], i["docs.count"]))
+    idx = safe(lambda: request(conf, "POST", "/wazuh-alerts-*/_search",
+                               {"size": 0, "aggs": {"i": {"terms": {"field": "_index", "size": 500}}}}))
+    if "error" in idx:
+        print("alert indices: ", idx["error"])
     else:
-        print("alert indices: ", idx.get("error", idx))
+        b = sorted(idx["aggregations"]["i"]["buckets"], key=lambda x: x["key"])
+        print("alert indices visible: %d" % len(b))
+        for i in b[-5:]:
+            print("   %s  %s docs" % (i["key"], i["doc_count"]))
     for label, q in (("all time", {"match_all": {}}),
                      ("last 3 days", {"range": {"timestamp": {"gte": "now-3d"}}})):
         r = safe(lambda: request(conf, "POST", "/wazuh-alerts-*/_count", {"query": q}))
@@ -111,6 +138,15 @@ def check(conf):
                              {"size": 1, "sort": [{"timestamp": "desc"}], "_source": ["timestamp", "agent.name"]}))
     hits = ((r.get("hits") or {}).get("hits") or []) if isinstance(r, dict) else []
     print("newest alert:  ", (hits[0].get("_source") if hits else r.get("error", "none visible")))
+    print("summary aggregations (each tested alone, last 3 days):")
+    for name, agg in build_aggs(5).items():
+        r = safe(lambda: search(conf, {"size": 0, "query": {"range": {"timestamp": {"gte": "now-3d"}}},
+                                       "aggs": {name: agg}}))
+        if "error" in r:
+            print("   %-6s FAILED: %s" % (name, r["error"]))
+        else:
+            print("   %-6s ok (%d buckets)" % (name, len(r["aggregations"][name].get("buckets", [])
+                                                     or r["aggregations"][name].get("by", {}).get("buckets", []))))
 
 
 def main():
@@ -131,26 +167,12 @@ def main():
     body = {
         "size": 0, "track_total_hits": True,
         "query": {"bool": {"filter": flt}},
-        "aggs": {
-            "sev": {"range": {"field": "rule.level", "ranges": [
-                {"key": "low (0-6)", "to": 7}, {"key": "medium (7-11)", "from": 7, "to": 12},
-                {"key": "high (12-14)", "from": 12, "to": 15}, {"key": "critical (15+)", "from": 15}]}},
-            "day": {"date_histogram": {"field": "timestamp", "calendar_interval": "day", "format": "yyyy-MM-dd"}},
-            "agent": {"terms": {"field": "agent.name", "size": 50},
-                      "aggs": {"max": {"max": {"field": "rule.level"}}}},
-            "combo": {"multi_terms": {"terms": [{"field": "rule.id"}, {"field": "agent.name"}],
-                                      "size": a.top, "order": {"_count": "desc"}},
-                      "aggs": {"first": {"min": {"field": "timestamp"}},
-                               "last": {"max": {"field": "timestamp"}},
-                               "info": {"top_hits": {"size": 1, "_source": ["rule.level", "rule.description",
-                                                                            "rule.mitre.id"]}}}},
-            "tuned": {"filter": {"terms": {"rule.id": list(TUNED_RULES)}},
-                      "aggs": {"by": {"terms": {"field": "rule.id", "size": 10}}}},
-        },
+        "aggs": build_aggs(a.top),
     }
     res = search(conf, body)
     aggs = res.get("aggregations") or {}
-    total = (res.get("hits") or {}).get("total", {}).get("value", 0)
+    total = (res.get("hits") or {}).get("total", 0)
+    total = total.get("value", 0) if isinstance(total, dict) else int(total or 0)
 
     L = []
     L.append("# Wazuh alert summary: last %d day(s)" % a.days)
