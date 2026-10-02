@@ -176,7 +176,8 @@ DRILL_FIELDS = [
     "data.win.eventdata.image", "data.win.eventdata.sourceImage", "data.win.eventdata.targetImage",
     "data.win.eventdata.grantedAccess", "data.win.eventdata.parentImage", "data.win.eventdata.targetFilename",
     "data.win.eventdata.targetObject", "data.win.eventdata.details", "data.win.eventdata.commandLine",
-    "data.win.eventdata.user", "data.win.system.eventID",
+    "data.win.eventdata.user", "data.win.eventdata.sourceUser", "data.win.eventdata.callTrace",
+    "data.win.system.eventID",
     # Linux auditd / syslog / FIM
     "data.audit.exe", "data.audit.command", "data.audit.dev", "data.audit.type", "data.audit.auid",
     "data.audit.prom", "data.audit.old_prom", "syscheck.path", "data.title", "data.file",
@@ -214,7 +215,10 @@ def drill(conf, a):
         print("\n  %s" % f)
         for b in bs:
             v = str(b["key"]).replace("\\\\", "\\")
-            print("    %6d  %s" % (b["doc_count"], v[:160]))
+            if f.endswith("callTrace"):
+                # keep just the module names: C:\\...\\ntdll.dll+9d4f4|... -> ntdll|KERNELBASE|...
+                v = " > ".join(m.split("\\")[-1].split("+")[0].rsplit(".", 1)[0] for m in v.split("|"))
+            print("    %6d  %s" % (b["doc_count"], v[:220]))
 
 
 def main():

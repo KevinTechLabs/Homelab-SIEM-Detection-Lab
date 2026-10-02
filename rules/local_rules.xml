@@ -3,6 +3,10 @@
   (Wazuh's stock example rule 100001 omitted). Each rule is a child of a stock rule and
   DOWNGRADES one verified benign pattern to level 3. Events are kept and searchable; anything
   that doesn't match every condition keeps the parent's original severity. Write-ups: docs/tuning.md
+
+  Note on 100100: the inline comment below ("0x40 ... cannot inject code") is kept as deployed but is
+  inaccurate. PROCESS_DUP_HANDLE can be escalated to a full-access handle by duplicating the target's
+  pseudo-handle. See the correction and residual risk in docs/tuning.md (Finding 1).
 -->
 
 <group name="sysmon,local_tuning,">

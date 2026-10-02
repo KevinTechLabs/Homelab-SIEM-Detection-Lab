@@ -10,11 +10,14 @@ Each finding follows the same steps: **observe, then investigate, verify, decide
 
 **Investigation**
 - Source: `C:\Users\<user>\AppData\Roaming\Spotify\Spotify.exe` → target `C:\Windows\Explorer.EXE`
-- `GrantedAccess: 0x40`, which is `PROCESS_DUP_HANDLE` only. Injection needs `VM_WRITE (0x20)`, `VM_OPERATION (0x8)` or `CREATE_THREAD (0x2)`, so this handle cannot inject.
+- `GrantedAccess: 0x40`, which is `PROCESS_DUP_HANDLE` only. It has none of the rights normally used for injection (`VM_WRITE 0x20`, `VM_OPERATION 0x8`, `CREATE_THREAD 0x2`).
+- **Correction (found during a later review):** my first write-up said this handle "cannot inject". That's wrong. Microsoft's documentation warns that a process holding `PROCESS_DUP_HANDLE` on another process can duplicate that process's own pseudo-handle and get a **full-access** handle. So 0x40 is not harmless by itself, and the tuning can't rest on the access mask alone.
 - The CallTrace runs through `shcore.dll` → `explorerframe.dll`, the Windows shell's file-dialog components.
 - Authenticode signature **Valid**, signer `CN=Spotify AB` (DigiCert G4 code-signing CA).
 
-**Decision:** benign. It is Spotify's file dialog duplicating a handle.
+**Decision:** benign. It is Spotify's file dialog duplicating a handle. The case rests on the **combination**: the signed binary, its exact install path, the shell file-dialog call trace, a steady volume matching normal use, and the mask.
+
+**Residual risk (accepted, documented):** the path is under the user's `AppData`, which the user can write to, and Sysmon access events don't carry a signature. A look-alike `Spotify.exe` dropped there by malware would match the rule. Two things limit this: the event is downgraded to level 3, not dropped, so it's still searchable; and process creation of that path is logged separately with hashes (Sysmon event 1). Requiring the file-dialog call trace in the rule would raise the bar further.
 
 **Rule 100100:** a child of 92910 at level 3. It matches **only** Spotify's exact path **and** access mask `^0x40$`, so any other process, or Spotify with a different mask, still alerts at level 12.
 
