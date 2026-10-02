@@ -9,7 +9,7 @@ Every number below came from my own environment. Addresses in this repo are repl
 | Area | Result |
 |---|---|
 | Deployment | Wazuh manager, indexer and dashboard in Docker; 5 agents (Windows 11 + Sysmon, 2× Ubuntu 26.04, Debian 13 on a Raspberry Pi, Kali) |
-| Alert tuning | 3 custom rules removed **~1,700 false-positive level-12/15 alerts a day**. Each one matches a single verified binary and behavior, so everything else still alerts at full severity ([details](docs/tuning.md)) |
+| Alert tuning | 5 custom rules (Spotify, OneDrive, PowerShell, Tailscale, and my own SOC tool's network scans) cover **~8,300 events in a 3-day window that would otherwise have alerted at level 10–15**, now kept as level-3 records. Each one matches a single verified binary and behavior, so everything else still alerts at full severity ([details](docs/tuning.md)) |
 | Vulnerabilities | **−25 % total / −38 % critical** findings after purging stale kernels and patching |
 | CIS hardening | SIEM server raised from **47 % → 67 %** in 6 batches, with **zero lockouts** and one planned reboot ([details](docs/hardening.md)) |
 | Benchmark QA | Found and documented **10+ benchmark/tooling defects** where a control was applied but reported as failed (audit 4.x, sudo-rs, PAM) |
@@ -47,13 +47,15 @@ flowchart LR
 | [`docs/hardening.md`](docs/hardening.md) | CIS batches on the SIEM server, accepted risks, benchmark defects |
 | [`docs/lab.md`](docs/lab.md) | Isolated lab target, log pipeline, detection gaps |
 | [`rules/local_rules.xml`](rules/local_rules.xml) | The custom Wazuh tuning rules |
-| [`scripts/wazuh-alert-summary.py`](scripts/wazuh-alert-summary.py) | Read-only triage report: severity, per day, per agent, top rule+agent pairs |
+| [`scripts/wazuh-alert-summary.py`](scripts/wazuh-alert-summary.py) | Read-only triage tool: summary report, `--drill` into the programs, files, access rights and call traces behind a rule, `--sample` raw logs, `--check` access diagnostics |
 
 ## Alert summary script
 
 ```bash
 sudo python3 scripts/wazuh-alert-summary.py --days 3
 sudo python3 scripts/wazuh-alert-summary.py --days 7 --top 40 --out ~/alert-summary.md
+sudo python3 scripts/wazuh-alert-summary.py --drill 92910 --agent WIN11-LAB   # what's behind a rule
+sudo python3 scripts/wazuh-alert-summary.py --drill 80710 --sample 2           # plus raw logs
 ```
 
 The script uses only the Python standard library. It reuses the read-only indexer account and pinned certificate fingerprint that Sentinel's `--wazuh-setup` stores in `/etc/sentinel/wazuh.json` (root-only), and refuses to connect if the certificate changed. Output is Markdown, so repeat noise and rare high-severity rules stand out.
@@ -61,6 +63,7 @@ The script uses only the Python standard library. It reuses the read-only indexe
 ## What I'd do differently
 
 - **Tune with evidence, never by rule ID.** Every exception here is scoped to a signed binary path plus the exact behavior: an access mask, a filename pattern, or a parent process. Disabling a whole rule would have hidden real attacks.
+- **Your own tools generate alerts too.** My SOC dashboard's network scan was the biggest source of level-10 alerts on the SIEM server.
 - **Correlate alerts with your own activity.** One "critical" alert was caused by me opening PowerShell to investigate a different alert.
 - **Don't trust a compliance score blindly.** About 10 CIS "failures" were controls that were already applied but checked with outdated tooling assumptions.
 - **Check that the pipeline works before trusting silence.** A harmless 404 proved logs reached the SIEM. Only then did "no alert" mean a real detection gap rather than a broken pipeline.

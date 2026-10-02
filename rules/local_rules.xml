@@ -46,3 +46,30 @@
     <mitre><id>T1562.004</id></mitre>
   </rule>
 </group>
+
+<group name="sysmon,local_tuning,">
+  <!-- Tuning: OneDrive's sync engine opens Explorer with 0x40 while updating sync-status overlays.
+       Needs ALL of: OneDrive.exe in the user's AppData, access exactly 0x40, and a call trace that runs
+       windows.storage -> FileSyncClient/SyncEngine. Anything else still fires 92910 at level 12. -->
+  <rule id="100103" level="3">
+    <if_sid>92910</if_sid>
+    <field name="win.eventdata.sourceImage" type="pcre2">(?i)^C:\\\\Users\\\\[^\\\\]+\\\\AppData\\\\Local\\\\Microsoft\\\\OneDrive\\\\OneDrive\.exe$</field>
+    <field name="win.eventdata.grantedAccess">^0x40$</field>
+    <field name="win.eventdata.callTrace" type="pcre2">(?i)windows\.storage\.dll\+[0-9a-f]+\|.*(FileSyncClient|SyncEngine)\.dll\+[0-9a-f]+</field>
+    <description>Tuned: OneDrive sync engine accessed Explorer with 0x40 (sync-status overlays)</description>
+    <mitre><id>T1055</id></mitre>
+  </rule>
+</group>
+
+<group name="audit,local_tuning,">
+  <!-- Tuning: Sentinel's network discovery runs arp-scan every 5 min; libpcap flips enp1s0 into
+       promiscuous mode and back (2 events per scan). Needs the arp-scan binary AND enp1s0.
+       Any other program enabling promiscuous mode still fires 80710 at level 10. -->
+  <rule id="100104" level="3">
+    <if_sid>80710</if_sid>
+    <match>comm="arp-scan" exe="/usr/sbin/arp-scan"</match>
+    <field name="audit.dev">^enp1s0$</field>
+    <description>Tuned: arp-scan (Sentinel discovery) toggled promiscuous mode on enp1s0</description>
+    <mitre><id>T1040</id></mitre>
+  </rule>
+</group>

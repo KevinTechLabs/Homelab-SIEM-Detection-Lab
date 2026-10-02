@@ -78,3 +78,44 @@ The tuned events are **downgraded, not dropped**. They stay searchable, and [`sc
 | After | 10,297 | 745 | 3,929 | 832 | 232 |
 
 Most of the drop came from old kernels (7.0.0-31) still installed next to the running one. The vulnerability feed matched CVEs against every installed kernel package. Purging them (about 345 MB and 319 MB on the two Ubuntu hosts) and applying pending security updates cut **25 % of all findings and 38 % of critical ones**.
+
+---
+
+## Finding 5: Three-day review with the alert-summary script
+
+**12,887 alerts in 3 days:** 4,943 low / 2,312 medium / 5,627 high / 5 critical. The script ([`scripts/wazuh-alert-summary.py`](../scripts/wazuh-alert-summary.py)) ranks rule+agent pairs by volume and separately lists *every* alert at level 10 or above, so rare high-severity rules can't hide below the noise.
+
+Two bugs I fixed in my own tooling along the way, both worth knowing:
+- An OpenSearch aggregation bug (`multi_terms` combined with `top_hits` throws "this.scorer is null" on some shards) made the first report say **0 alerts**. OpenSearch returned HTTP 200 with half the shards failed. The script now fails loudly on any shard failure, because a silently empty SIEM report is worse than an error.
+- Indexed alerts nest decoded fields under `data.` (`data.win.eventdata.image`), while rules refer to them without the prefix (`win.eventdata.image`).
+
+### 5a: Critical cluster: app auto-updates (triaged, not tuned)
+Within 6 minutes on the Windows host: rule 92213 (level 15) ×5, rule 92041 "Base64-like registry value" ×4, and rule 92058 "Application Compatibility Database launched" ×1. The drill-down showed:
+- Spotify (Chromium-based) unpacking four `.js` files into Temp
+- `BraveUpdate.exe` dropping a `brave_installer-delta-x64.exe`
+- Discord updating 1.0.9259 → 1.0.9260 and re-registering its `discord://` handler with `reg.exe` (the "Base64-like" values)
+- `sdbinst.exe -m -bg` run by `svchost` (Windows updating its compatibility database)
+
+**Decision:** benign. **Not tuned**: these are rare and only fire when apps update. The existing PowerShell rule (100101) correctly did *not* match these files, so they reached me at full severity, which is how it should work.
+
+### 5b: OneDrive, 5,591 level-12 alerts (Finding 2 recurred, so now tuned)
+- `OneDrive.exe` → `Explorer.EXE`, access `0x40` (5,617 of the 5,626 events of rule 92910 had that mask). The rest were Discord (28) and MSI Center (7, mask `0x1410`, read-only); both are low volume and left alone.
+- Every OneDrive call trace runs `ntdll → KERNELBASE → shcore → windows.storage → FileSyncClient / SyncEngine`, which is OneDrive's sync engine updating overlay icons through the shell storage API.
+- **Rule 100103** requires all three: the OneDrive path, mask exactly `0x40`, **and** that call trace. Because of the `0x40` correction in Finding 1, the call trace is the main evidence, not the mask.
+
+### 5c: "Device enables promiscuous mode", 1,716 level-10 alerts on the SIEM server: **my own SOC tool**
+- Rule 80710 (auditd `ANOM_PROMISCUOUS`) on `enp1s0`, at exactly **24 per hour** (one on and one off every 5 minutes) for 3 days, from a background service (auid unset).
+- Sentinel's discovery loop runs `arp-scan` every 300 s. Running `arp-scan` by hand produced the same pair of records:
+  - turning it **on** is `setsockopt(SOL_PACKET, PACKET_ADD_MEMBERSHIP)`
+  - turning it **off** is the `close()` on the socket
+  - both carry `exe="/usr/sbin/arp-scan"`
+- The hex `proctitle` in Sentinel's own events decodes to Sentinel's exact scan command line.
+- Wazuh's decoder didn't put `exe` into its own field, but it **is** in the full log. So **rule 100104** matches `comm="arp-scan" exe="/usr/sbin/arp-scan"` plus `dev=enp1s0`.
+- **Why not just downgrade 80710?** A rule that ignored every promiscuous-mode event from a background service would also hide a real packet sniffer running as root (T1040). Scoping to the binary keeps that detection.
+- **Residual risk:** root could replace `/usr/sbin/arp-scan` with a sniffer. AIDE and Wazuh FIM both watch `/usr/sbin`, so a swapped binary raises its own alert.
+- **Lesson:** monitoring tools generate security telemetry too. The SOC dashboard was the single largest source of level-10 alerts on its own host.
+
+| Source | Before (3 days) | After |
+|---|---|---|
+| OneDrive → Explorer (92910, level 12) | 5,591 | level 3 under rule 100103 |
+| Sentinel arp-scan (80710, level 10) | 1,716 | level 3 under rule 100104 |
