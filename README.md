@@ -46,6 +46,7 @@ flowchart LR
 | [`docs/tuning.md`](docs/tuning.md) | Alert triage write-ups: evidence, decision, rule, verification |
 | [`docs/hardening.md`](docs/hardening.md) | CIS batches on the SIEM server, accepted risks, benchmark defects |
 | [`docs/lab.md`](docs/lab.md) | Isolated lab target, log pipeline, detection gaps |
+| [`docs/incident-silent-log-pipeline.md`](docs/incident-silent-log-pipeline.md) | Incident write-up: router logs silently stopped for 7.5 h (T1562.006), traced with `tcpdump`, fixed, gap documented |
 | [`rules/local_rules.xml`](rules/local_rules.xml) | The custom Wazuh tuning rules |
 | [`scripts/wazuh-alert-summary.py`](scripts/wazuh-alert-summary.py) | Read-only triage tool: summary report, `--drill` into the programs, files, access rights and call traces behind a rule, `--sample` raw logs, `--check` access diagnostics |
 
@@ -66,6 +67,7 @@ The script uses only the Python standard library. It reuses the read-only indexe
 - **Your own tools generate alerts too.** My SOC dashboard's network scan was the biggest source of level-10 alerts on the SIEM server.
 - **Correlate alerts with your own activity.** One "critical" alert was caused by me opening PowerShell to investigate a different alert.
 - **Don't trust a compliance score blindly.** About 10 CIS "failures" were controls that were already applied but checked with outdated tooling assumptions.
+- **Silence isn't safety.** The router's logs once stopped for 7.5 hours while the dashboard said "Threat: Low" ([incident write-up](docs/incident-silent-log-pipeline.md)).
 - **Check that the pipeline works before trusting silence.** A harmless 404 proved logs reached the SIEM. Only then did "no alert" mean a real detection gap rather than a broken pipeline.
 
 ## Tools
