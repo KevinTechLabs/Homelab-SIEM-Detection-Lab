@@ -37,7 +37,7 @@ About 11 minutes after deployment, rule 92910 fired at level 12 for a *different
 
 **Lesson:** *my own investigation generated the critical alert.* Correlate alert times with analyst activity before escalating.
 
-**Rule 100101:** a child of 92213 at level 3. It requires **both** the PowerShell binary path **and** the exact `__PSScriptPolicyTest_[a-z0-9]{8}.[a-z0-9]{3}.ps1` name in the user's Temp folder. Any other executable drop still alerts at level 15.
+**Rule 100101:** a child of 92213 at level 3. It requires **both** a PowerShell binary (Windows PowerShell, ISE, or PowerShell 7) **and** the exact `__PSScriptPolicyTest_[a-z0-9]{8}.[a-z0-9]{3}.ps1` name in the user's Temp folder. Any other executable drop still alerts at level 15.
 
 **Verification:** reopening PowerShell produced the event at level 3 under rule 100101, with no level-15 alert.
 

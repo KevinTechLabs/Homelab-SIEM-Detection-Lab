@@ -1,12 +1,14 @@
 <!--
-  Custom Wazuh tuning rules (manager: /var/ossec/etc/rules/local_rules.xml).
-  Each rule is a child of a stock rule and DOWNGRADES one verified benign pattern to level 3.
-  Events are kept and searchable; anything that doesn't match every condition keeps the
-  parent's original severity. Write-ups: docs/tuning.md
+  Custom Wazuh tuning rules, exported from the manager's /var/ossec/etc/rules/local_rules.xml
+  (Wazuh's stock example rule 100001 omitted). Each rule is a child of a stock rule and
+  DOWNGRADES one verified benign pattern to level 3. Events are kept and searchable; anything
+  that doesn't match every condition keeps the parent's original severity. Write-ups: docs/tuning.md
 -->
-<group name="sysmon,local_tuning,">
 
-  <!-- Finding 1: Spotify file dialog duplicating a handle to Explorer (0x40 = PROCESS_DUP_HANDLE, cannot inject) -->
+<group name="sysmon,local_tuning,">
+  <!-- Tuning: Spotify opens a handle to Explorer via the Windows file dialog.
+       Only matches access 0x40 (duplicate handle), which cannot inject code.
+       Any other process, or Spotify requesting more rights, still fires rule 92910 at level 12. -->
   <rule id="100100" level="3">
     <if_sid>92910</if_sid>
     <field name="win.eventdata.sourceImage" type="pcre2">(?i)^C:\\\\Users\\\\[^\\\\]+\\\\AppData\\\\Roaming\\\\Spotify\\\\Spotify\.exe$</field>
@@ -14,23 +16,29 @@
     <description>Tuned: Spotify accessed Explorer with 0x40 (benign file-dialog handle), not injection</description>
     <mitre><id>T1055</id></mitre>
   </rule>
+</group>
 
-  <!-- Finding 3: PowerShell's AppLocker/execution-policy probe file, created and deleted on every launch -->
+<group name="sysmon,local_tuning,">
+  <!-- Tuning: PowerShell writes and deletes __PSScriptPolicyTest_<random>.ps1 in Temp on every start
+       (execution-policy/AppLocker check). Needs BOTH the PowerShell binary AND that exact name pattern;
+       any other file dropped in Temp still fires 92213 at level 15. -->
   <rule id="100101" level="3">
     <if_sid>92213</if_sid>
-    <field name="win.eventdata.image" type="pcre2">(?i)^C:\\\\Windows\\\\System32\\\\WindowsPowerShell\\\\v1\.0\\\\powershell\.exe$</field>
-    <field name="win.eventdata.targetFilename" type="pcre2">(?i)^C:\\\\Users\\\\[^\\\\]+\\\\AppData\\\\Local\\\\Temp\\\\__PSScriptPolicyTest_[a-z0-9]{8}\.[a-z0-9]{3}\.ps1$</field>
-    <description>Tuned: PowerShell execution-policy test file (__PSScriptPolicyTest), benign</description>
+    <field name="win.eventdata.image" type="pcre2">(?i)^C:\\\\(Windows\\\\(System32|SysWOW64)\\\\WindowsPowerShell\\\\v1\.0\\\\powershell(_ise)?|Program Files\\\\PowerShell\\\\7\\\\pwsh)\.exe$</field>
+    <field name="win.eventdata.targetFilename" type="pcre2">(?i)\\\\AppData\\\\Local\\\\Temp\\\\__PSScriptPolicyTest_[a-z0-9]{8}\.[a-z0-9]{3}\.ps1$</field>
+    <description>Tuned: PowerShell execution-policy test file (__PSScriptPolicyTest_*.ps1), created on every PowerShell start</description>
     <mitre><id>T1105</id></mitre>
   </rule>
+</group>
 
-  <!-- Finding 4: Tailscale re-creating its own inbound firewall rule at service start -->
+<group name="sysmon,local_tuning,">
+  <!-- Tuning: tailscaled.exe (SYSTEM) re-creates its "Tailscale-In" firewall rule on every service start.
+       Needs BOTH the Tailscale service as parent AND that exact rule name; any other netsh firewall change stays level 10. -->
   <rule id="100102" level="3">
     <if_sid>92043</if_sid>
     <field name="win.eventdata.parentImage" type="pcre2">(?i)^C:\\\\Program Files\\\\Tailscale\\\\tailscaled\.exe$</field>
-    <field name="win.eventdata.commandLine" type="pcre2">(?i)name=Tailscale-In\b</field>
-    <description>Tuned: Tailscale service re-creating its Tailscale-In firewall rule, benign</description>
+    <field name="win.eventdata.commandLine" type="pcre2">(?i)netsh\.exe"?\s+advfirewall\s+firewall\s+add\s+rule\s+name=Tailscale-In\s</field>
+    <description>Tuned: Tailscale service re-creating its own Tailscale-In firewall rule at startup</description>
     <mitre><id>T1562.004</id></mitre>
   </rule>
-
 </group>
