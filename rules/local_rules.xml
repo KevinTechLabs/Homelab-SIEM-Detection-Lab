@@ -73,3 +73,17 @@
     <mitre><id>T1040</id></mitre>
   </rule>
 </group>
+
+<group name="audit,local_tuning,">
+  <!-- Tuning: when a container starts (e.g. the nightly Vaultwarden backup restart at 03:00 UTC),
+       dockerd attaches its new veth interface to the Docker bridge, which flips it into promiscuous mode.
+       Needs BOTH the dockerd binary AND a veth* interface. Any other program, or the real NIC, still fires 80710 at level 10.
+       type="pcre2" is required: Wazuh's default OS_Regex has no [..] character classes, so without it the rule never matches. -->
+  <rule id="100105" level="3">
+    <if_sid>80710</if_sid>
+    <match>exe="/usr/bin/dockerd"</match>
+    <field name="audit.dev" type="pcre2">^veth[0-9a-f]+$</field>
+    <description>Tuned: dockerd attached a container's veth interface (promiscuous mode on Docker bridge member)</description>
+    <mitre><id>T1040</id></mitre>
+  </rule>
+</group>

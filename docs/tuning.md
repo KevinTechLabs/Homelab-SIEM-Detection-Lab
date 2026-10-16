@@ -125,3 +125,21 @@ Within 6 minutes on the Windows host: rule 92213 (level 15) ×5, rule 92041 "Bas
 - 80710's 24-hour total (546) matched about 22.5 hours of pre-deployment scans plus a handful of others, so Sentinel's scans stopped landing in 80710 when the rule went live.
 
 The handful of others is the rule working as intended. About a dozen 80710 events came from Docker `veth*` interfaces entering promiscuous mode as containers attached to the bridge after a reboot. They aren't `arp-scan`, so they **stayed at level 10**. They happen once per container start, so they're noted and left untuned until they recur noisily.
+
+---
+
+## Finding 6: Daily 03:00 "promiscuous mode" alert, and a rule-ID collision that silently disabled a detection pack
+
+### 6a: Docker veth interfaces (tuned)
+- Rule 80710 (level 10) fired every day at exactly 03:00:01 UTC on the SIEM server, on interfaces named `veth…`, not the real NIC.
+- The crontab showed `0 3 * * * cd /opt/vaultwarden && ./backup.sh`. The backup restarts the password-manager container, and Docker creates a fresh `veth` pair for it.
+- `ausearch -m ANOM_PROMISCUOUS` attributed every veth event to `exe=/usr/bin/dockerd`.
+- **Rule 100105** requires both `dockerd` **and** a `veth*` device. Any other program, or the physical NIC, still alerts at level 10.
+- **Bug found while deploying:** the first version never matched. Wazuh's default regex engine (OS_Regex) doesn't support character classes like `[0-9a-f]`, so `^veth[0-9a-f]+$` failed silently. Adding `type="pcre2"` fixed it. Verified by restarting a container and seeing the event land under 100105.
+
+### 6b: Duplicate rule IDs broke the password-manager detections (fixed)
+- Wazuh's config check warned that eight rule IDs (100201–100205, 100210, 100211, 100220) were **duplicated**. Two projects had picked the same range: the purple-team detections in `local_rules.xml` and the Vaultwarden detections in `vaultwarden_rules.xml`.
+- Wazuh keeps only the first definition, and `local_rules.xml` loads first. So the Vaultwarden child rules were dropped, and the survivors' `if_sid`/`if_matched_sid` references resolved to the **wrong parents**. For example, "password brute force" was counting *bash history tampering* events instead of failed logins.
+- **Impact:** every Vaultwarden detection (failed login, brute force, spray, 2FA failure, admin token guess, admin panel probe, new signups) was inactive, and nothing errored. The only symptom was a warning at config-check time.
+- **Fix:** renumbered the Vaultwarden pack to 1003xx. Its references are all internal, so shifting every ID and reference by 100 kept the chains intact. The config check then passed with zero duplicate warnings.
+- **Lesson:** reserve a rule-ID block per rule pack, and treat "duplicated rule ID" warnings as errors, not noise.
