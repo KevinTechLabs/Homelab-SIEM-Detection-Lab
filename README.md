@@ -8,11 +8,12 @@ Every number below came from my own environment. Addresses in this repo are repl
 
 | Area | Result |
 |---|---|
-| Deployment | Wazuh manager, indexer and dashboard in Docker; 5 agents (Windows 11 + Sysmon, 2× Ubuntu 26.04, Debian 13 on a Raspberry Pi, Kali) |
+| Deployment | Wazuh manager, indexer and dashboard in Docker; 6 agents (Windows 11 + Sysmon, 2× Ubuntu 26.04, Debian 13 on two Raspberry Pis, Kali) |
 | Alert tuning | 5 custom rules (Spotify, OneDrive, PowerShell, Tailscale, and my own SOC tool's network scans) cover **~8,300 events in a 3-day window that would otherwise have alerted at level 10–15**, now kept as level-3 records. Each one matches a single verified binary and behavior, so everything else still alerts at full severity ([details](docs/tuning.md)) |
 | Vulnerabilities | **−25 % total / −38 % critical** findings after purging stale kernels and patching |
 | CIS hardening | SIEM server raised from **47 % → 67 %** in 6 batches, with **zero lockouts** and one planned reboot ([details](docs/hardening.md)) |
 | Benchmark QA | Found and documented **10+ benchmark/tooling defects** where a control was applied but reported as failed (audit 4.x, sudo-rs, PAM) |
+| Password vault | Agent on the isolated Vaultwarden Pi with **active response disabled** (send-only), real-time FIM on its keys and config, CIS **42 % → 61 %** on ARM. Validation caught a server that could still reach the vault ([details](docs/vault-agent.md)) |
 | Lab | Vulnerable web app on an isolated VLAN, published only on loopback. Web logs verified end to end into the SIEM, and two detection gaps documented ([details](docs/lab.md)) |
 | Integration | Sentinel reads Wazuh through read-only accounts, with SHA-256 certificate pinning and deep links back into Wazuh |
 
@@ -29,15 +30,19 @@ flowchart LR
   subgraph LAB["Lab VLAN 10.20.40.0/24 (isolated)"]
     K["Kali agent<br/>DVWA + MariaDB (loopback only)"]
   end
+  subgraph VAULT["Vault zone 10.20.60.0/24 (own pfSense port)"]
+    V["Vaultwarden Pi agent<br/>active response disabled"]
+  end
   FW{{"pfSense"}}
   U2 -->|1514/1515| S
   PI -->|1514/1515| S
   W -->|1514/1515| S
   K -->|"1514/1515 only<br/>(single /32 → /32 rule)"| FW --> S
+  V -->|"1514/1515 only<br/>(single /32 → /32 rule)"| FW
 ```
 
 - Agents talk to the manager on **1514/1515** only. The API (55000), indexer (9200) and syslog (514) are bound to `127.0.0.1`.
-- The Lab VLAN cannot reach any other zone. Its single exception is one pfSense pass rule: Kali /32 → Wazuh server /32, TCP 1514–1515.
+- The Lab VLAN and the Vault zone cannot reach any other zone. Each has a single exception: one pfSense pass rule from its host /32 to the Wazuh server /32, TCP 1514–1515. The server can't start connections into either zone.
 
 ## Repo layout
 
@@ -46,6 +51,7 @@ flowchart LR
 | [`docs/tuning.md`](docs/tuning.md) | Alert triage write-ups: evidence, decision, rule, verification |
 | [`docs/hardening.md`](docs/hardening.md) | CIS batches on the SIEM server, accepted risks, benchmark defects |
 | [`docs/lab.md`](docs/lab.md) | Isolated lab target, log pipeline, detection gaps |
+| [`docs/vault-agent.md`](docs/vault-agent.md) | Send-only agent on the password-vault Pi, FIM scope, CIS on ARM, Tailscale policy validation finding |
 | [`docs/incident-silent-log-pipeline.md`](docs/incident-silent-log-pipeline.md) | Incident write-up: router logs silently stopped twice (T1562.006), traced with `tcpdump`, fixed, and a silence alert built so it can't happen unnoticed again |
 | [`rules/local_rules.xml`](rules/local_rules.xml) | The custom Wazuh tuning rules |
 | [`scripts/wazuh-alert-summary.py`](scripts/wazuh-alert-summary.py) | Read-only triage tool: summary report, `--drill` into the programs, files, access rights and call traces behind a rule, `--sample` raw logs, `--check` access diagnostics |
@@ -67,6 +73,7 @@ The script uses only the Python standard library. It reuses the read-only indexe
 - **Your own tools generate alerts too.** My SOC dashboard's network scan was the biggest source of level-10 alerts on the SIEM server.
 - **Correlate alerts with your own activity.** One "critical" alert was caused by me opening PowerShell to investigate a different alert.
 - **Don't trust a compliance score blindly.** About 10 CIS "failures" were controls that were already applied but checked with outdated tooling assumptions.
+- **A TLS error is not a block.** Any reply means the path is open; only a timeout proves the policy works. A tag-based access policy fails open for any machine you forget to tag.
 - **Silence isn't safety.** The router's logs once stopped for 7.5 hours while the dashboard said "Threat: Low" ([incident write-up](docs/incident-silent-log-pipeline.md)).
 - **Check that the pipeline works before trusting silence.** A harmless 404 proved logs reached the SIEM. Only then did "no alert" mean a real detection gap rather than a broken pipeline.
 
